@@ -21,6 +21,7 @@
 #include "mbedtls.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 #include "mbedtls/sha256.h"
 #include "mbedtls/ecdsa.h"
 #include "mbedtls/pk.h"
@@ -52,7 +53,7 @@ typedef struct
 #define APPLICATION_BANK0_ADDR 0x08020000
 #define APPLICATION_BANK1_ADDR 0x08100000
 #define FIRMWARE_SIZE 0xE0000
-#define USER_DATA_ADDR         0x081D0000
+#define USER_DATA_ADDR         0x081E0000
 #define USER_DATA_SECTOR_SIZE  (128*1024)
 /* USER CODE END PD */
 
@@ -188,8 +189,9 @@ static void FlashWriteUserData(uint32_t addr, UserData *user)
     {
     	Error_Handler();
     }
-
     HAL_FLASH_Unlock();
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_BANK1);
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_BANK2);
 
     FLASH_EraseInitTypeDef EraseInitStruct = {0};
     uint32_t SectorError = 0;
@@ -201,14 +203,31 @@ static void FlashWriteUserData(uint32_t addr, UserData *user)
     EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
 
     status = HAL_FLASHEx_Erase(&EraseInitStruct, &SectorError);
-    if (status != HAL_OK) Error_Handler();
-
-    uint32_t *p = (uint32_t*)user;
-    uint32_t words = sizeof(UserData) / 4;
-
-    for (uint32_t i = 0; i < words; i++)
+    if (status != HAL_OK)
     {
-        status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD, addr + i*4, *(p + i));
+    	Error_Handler();
+    }
+    uint8_t *data = (uint8_t*)user;
+    uint32_t flash_addr = addr;
+    uint32_t remaining = sizeof(UserData);
+
+    while (remaining >= 32)
+    {
+        // 32 Byte an Flashword programmieren
+        status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD, flash_addr, (uint32_t)data);
+        if (status != HAL_OK) Error_Handler();
+
+        flash_addr += 32; // nächste Flashword-Adresse
+        data += 32;       // nächste 32 Byte im UserData
+        remaining -= 32;
+    }
+
+    // Optional: Rest < 32 Byte
+    uint8_t tmp[32] = {0};
+    if (remaining > 0)
+    {
+        memcpy(tmp, data, remaining);
+        status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD, flash_addr, (uint32_t)tmp);
         if (status != HAL_OK) Error_Handler();
     }
     HAL_FLASH_Lock();
